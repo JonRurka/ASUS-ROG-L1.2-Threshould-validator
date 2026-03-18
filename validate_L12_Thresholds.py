@@ -5,7 +5,7 @@ import collections
 import logging
 import re
 
-import numpy as np
+import struct
 
 from ctypes import *
 
@@ -294,7 +294,8 @@ def to_pcie_register(mcfg_base, dev, offset):
     return to_pcie_register_1(mcfg_base, dev['bus'], dev['device'], dev['func'], offset);
 
 def find_in_cap_list(name, mcfg_base, device, raw_bytes):
-    int32_list = np.frombuffer(raw_bytes, dtype=np.uint32).tolist();
+    int32_list = struct.iter_unpack('<I', raw_bytes);
+    int32_list = [item[0] for item in int32_list]
 
     cur_offset = 0x100;
     res = {'Found': False, 'LTRL12TV': 0, 'Scale': 0};
@@ -345,8 +346,7 @@ def parse_device_string(val):
     bus = specifier_list[0].strip().split(' ')[1];
     dev = specifier_list[1].strip().split(' ')[1];
     func = specifier_list[2].strip().split(' ')[1];
-    #print(f"{bus}, {dev}, {func}");
-    #return pci_dev(0, 0, 0)
+
     return pci_dev(
         int(bus, 16), 
         int(dev, 16), 
