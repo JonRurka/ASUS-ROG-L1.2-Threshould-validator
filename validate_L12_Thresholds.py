@@ -304,6 +304,8 @@ def find_in_cap_list(name, mcfg_base, device, bytes):
     
     print(f"{name}: Scanning PCIe capabilities for L1.2 Threshold with ID 0x001E...");
     
+    res = {'Found': False, 'LTRL12TV': 0, 'Scale': 0};
+    
     iter = 0;
     while True:
         cap_ID = cur & 0x0000FFFF;
@@ -321,6 +323,9 @@ def find_in_cap_list(name, mcfg_base, device, bytes):
             LTRL12TV = (val & 0x03FF0000) >> 16;
             scale = (val & 0xE0000000) >> 29;
             print(f"\t{name}: Found capability 0x001E at {to_pcie_register(mcfg_base, device, next_val):X}: 0x{val:X} -> {LTRL12TV} at 0b{scale:03b}");
+            res['Found'] = True;
+            res['LTRL12TV'] = LTRL12TV;
+            res['Scale'] = scale;
             found_threshold = True;
             break;
         
@@ -329,6 +334,8 @@ def find_in_cap_list(name, mcfg_base, device, bytes):
     
     if not found_threshold:
         print(f"\t{name}: Failed to find capability 0x001E");
+        
+    return res;
 
 def check_L12():
     
@@ -339,7 +346,6 @@ def check_L12():
     print(f"Found {rwe.version} at {rwe.exePath}");
     
     MCFG_table_lines = rwe.callRWECommand("ACPI Dump MCFG").Output.split('\r\n');
-    rwe.callRWECommand("rwexit");
     
     base_addr_str = "0x00000000C0000000"; # default most likely
     found = False;
@@ -364,10 +370,18 @@ def check_L12():
     pcie_root_reg_cap_bytes = rwe.readMemory(pcie_root_reg_start, 0xFFF - 0x100 + 1);
     pcie_gpu_reg_cap_bytes = rwe.readMemory(gpu_pcie_reg_start, 0xFFF - 0x100 + 1);
     
-    find_in_cap_list("PCIe Root Config", mcfg_base_addr, pcie_root, pcie_root_reg_cap_bytes);
-    find_in_cap_list("GPU PCIe Config", mcfg_base_addr, gpu_pcie, pcie_gpu_reg_cap_bytes);
     
+    root_res = find_in_cap_list("PCIe Root Config", mcfg_base_addr, pcie_root, pcie_root_reg_cap_bytes);
+    gpu_res = find_in_cap_list("GPU PCIe Config", mcfg_base_addr, gpu_pcie, pcie_gpu_reg_cap_bytes);
     
+    if (root_res['Found'] and gpu_res['Found']):
+        if (root_res['LTRL12TV'] == gpu_res['LTRL12TV'] and
+            root_res['Scale'] == gpu_res['Scale']):
+            print('L1.2 THRESHOLDS MATCH!');
+        else:
+            print('L1.2 THRESHOLDS DO NOT MATCH!');
+    else:
+        print('L1.2 Not University Supported');
     
     
 if __name__ == '__main__':
