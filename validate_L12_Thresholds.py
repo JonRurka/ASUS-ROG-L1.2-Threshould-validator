@@ -293,48 +293,49 @@ def to_pcie_register_1(mcfg_base, bus, dev, func, offset):
 def to_pcie_register(mcfg_base, dev, offset):
     return to_pcie_register_1(mcfg_base, dev['bus'], dev['device'], dev['func'], offset);
 
-def find_in_cap_list(name, mcfg_base, device, bytes):
-    int32_array_np = np.frombuffer(bytes, dtype=np.uint32);
-    int32_list = int32_array_np.tolist();
-    #print(f"{int32_list}");
-    
-    cur = int32_list[0];
-    
-    found_threshold = False;
-    
-    print(f"{name}: Scanning PCIe capabilities for L1.2 Threshold with ID 0x001E...");
-    
+def find_in_cap_list(name, mcfg_base, device, raw_bytes):
+    int32_list = np.frombuffer(raw_bytes, dtype=np.uint32).tolist();
+
+    cur_offset = 0x100;
     res = {'Found': False, 'LTRL12TV': 0, 'Scale': 0};
-    
-    iter = 0;
-    while True:
-        cap_ID = cur & 0x0000FFFF;
-        next_val = (cur & 0xFFF00000) >> 20;
-        next = int( (to_pcie_register(mcfg_base, device, next_val) - to_pcie_register(mcfg_base, device, 0x100)) / 4 );
-        #next = int( (next_val - 0x100) / 4 );
-        
-        print(f"\t{name}: 0x{cur:X}: Capability ID: 0x{cap_ID:X}, Next val: {next_val}, Next: {next}");
-        
-        if (next_val == 0 or iter > 30):
+
+    print(f"{name}: Scanning PCIe capabilities for L1.2 Threshold with ID 0x001E...");
+
+    for iteration in range(50):
+        idx = (cur_offset - 0x100) // 4;
+        if idx < 0 or idx >= len(int32_list):
             break;
-            
-        if (cap_ID == 0x001E):
-            val = int32_list[next];
-            LTRL12TV = (val & 0x03FF0000) >> 16;
-            scale = (val & 0xE0000000) >> 29;
-            print(f"\t{name}: Found capability 0x001E at {to_pcie_register(mcfg_base, device, next_val):X}: 0x{val:X} -> {LTRL12TV} at 0b{scale:03b}");
+
+        header = int32_list[idx];
+        cap_id = header & 0x0000FFFF;
+        next_offset = (header & 0xFFF00000) >> 20;
+
+        print(f"\t{name}: Offset 0x{cur_offset:X}: Header=0x{header:08X}, Capability ID: 0x{cap_id:04X}, Next: 0x{next_offset:X}");
+
+        if cap_id == 0x001E:
+            # L1 PM Substates Control 1 is at capability base + 0x08 (idx + 2 DWORDs)
+            ctrl1_idx = idx + 2;
+            if ctrl1_idx >= len(int32_list):
+                print(f"\t{name}: Found L1SS capability but Control 1 register is out of bounds");
+                break;
+            ctrl1 = int32_list[ctrl1_idx];
+            LTRL12TV = (ctrl1 >> 16) & 0x3FF;
+            scale = (ctrl1 >> 29) & 0x7;
+            phys_addr = to_pcie_register(mcfg_base, device, cur_offset);
+            print(f"\t{name}: Found L1SS at offset 0x{cur_offset:X} (addr 0x{phys_addr:X}), Control1=0x{ctrl1:08X}, LTRL12TV={LTRL12TV}, Scale=0b{scale:03b}");
             res['Found'] = True;
             res['LTRL12TV'] = LTRL12TV;
             res['Scale'] = scale;
-            found_threshold = True;
             break;
-        
-        cur = int32_list[next];
-        iter += 1;
-    
-    if not found_threshold:
+
+        if next_offset == 0:
+            break;
+
+        cur_offset = next_offset;
+
+    if not res['Found']:
         print(f"\t{name}: Failed to find capability 0x001E");
-        
+
     return res;
 
 def check_L12():
@@ -381,7 +382,7 @@ def check_L12():
         else:
             print('L1.2 THRESHOLDS DO NOT MATCH!');
     else:
-        print('L1.2 Not University Supported');
+        print('L1.2 Not Universally Supported');
     
     
 if __name__ == '__main__':
