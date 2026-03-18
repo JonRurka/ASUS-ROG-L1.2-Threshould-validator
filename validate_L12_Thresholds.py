@@ -338,6 +338,21 @@ def find_in_cap_list(name, mcfg_base, device, raw_bytes):
 
     return res;
 
+def parse_device_string(val):
+    device_id_part = val.split('-')[0].strip();
+    specifier_list = device_id_part.split(',');
+    
+    bus = specifier_list[0].strip().split(' ')[1];
+    dev = specifier_list[1].strip().split(' ')[1];
+    func = specifier_list[2].strip().split(' ')[1];
+    #print(f"{bus}, {dev}, {func}");
+    #return pci_dev(0, 0, 0)
+    return pci_dev(
+        int(bus, 16), 
+        int(dev, 16), 
+        int(func, 16)
+    );
+
 def check_L12():
     
     pcie_root = pci_dev(0, 1, 0);
@@ -345,6 +360,43 @@ def check_L12():
     
     rwe = ReadWriteEverything()
     print(f"Found {rwe.version} at {rwe.exePath}");
+    
+    found_likely_root = False;
+    likely_root_id = 0;
+    found_likely_gpu = False;
+    likely_gpu_id = 0;
+    
+    print("\nPCI Device List Options (*r = likely Root, *g = likely GPU):")
+    pci_tree_list = rwe.callRWECommand("PCITREE").Output.split('\r\n');
+    device_list = [];
+    num_valid = 0;
+    for i in range(len(pci_tree_list)):
+        ent = pci_tree_list[i].strip();
+        if (not ent.startswith("Bus")):
+            continue;
+        astrisk = '';
+        if (not found_likely_root and "PCI-to-PCI Bridge" in ent): #PCI-to-PCI Bridge
+            found_likely_root = True;
+            likely_root_id = num_valid + 1;
+            astrisk = '*r';
+        if (not found_likely_gpu and "nVidia Corporation VGA Controller" in ent): #PCI-to-PCI Bridge
+            found_likely_gpu = True;
+            likely_gpu_id = num_valid + 1;
+            astrisk = '*g';
+        print(f"  {num_valid + 1}: {ent} {astrisk}");
+        device_list.append(parse_device_string(ent))
+        num_valid += 1;
+    
+    root_device_selection = int(input(f"\nPlease Enter selection for PCIe Root Device (1 - {num_valid}, probably {likely_root_id}): ")) - 1;
+    gpu_device_selection = int(input(f"Please Enter selection for GPU Device  (1 - {num_valid}, probably {likely_gpu_id}): ")) - 1;
+    
+    assert root_device_selection >= 0 and gpu_device_selection >= 0, "Invalid selection";
+    assert root_device_selection < num_valid and gpu_device_selection < num_valid, "Invalid selection";
+    
+    pcie_root = device_list[root_device_selection];
+    gpu_pcie = device_list[gpu_device_selection];
+    #print(pcie_root);
+    #print(gpu_pcie);
     
     MCFG_table_lines = rwe.callRWECommand("ACPI Dump MCFG").Output.split('\r\n');
     
@@ -375,14 +427,15 @@ def check_L12():
     root_res = find_in_cap_list("PCIe Root Config", mcfg_base_addr, pcie_root, pcie_root_reg_cap_bytes);
     gpu_res = find_in_cap_list("GPU PCIe Config", mcfg_base_addr, gpu_pcie, pcie_gpu_reg_cap_bytes);
     
+    print("\nRESULTS:");
     if (root_res['Found'] and gpu_res['Found']):
         if (root_res['LTRL12TV'] == gpu_res['LTRL12TV'] and
             root_res['Scale'] == gpu_res['Scale']):
-            print('L1.2 THRESHOLDS MATCH!');
+            print('\tL1.2 THRESHOLDS MATCH! \n\tThis model does not have mismatch bug.');
         else:
-            print('L1.2 THRESHOLDS DO NOT MATCH!');
+            print('\tL1.2 THRESHOLDS DO NOT MATCH! \n\tASUS mismatch Bugs likely!');
     else:
-        print('L1.2 Not Universally Supported');
+        print("\tL1.2 Not Universally Supported; \n\tMismatch Bug not relevant to this system.");
     
     
 if __name__ == '__main__':
