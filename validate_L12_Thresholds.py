@@ -282,10 +282,19 @@ class ReadWriteEverything(object):
             data = f.read()
         #os.remove(LOCAL_TMP_FILE)
         return data
+       
+    def readConfigByte(self, bus, dev, func, offset):
+        cmd = "RPCI %d %d %d 0x%X" % (bus, dev, func, offset);
+        n = self.callRWECommand(cmd)
+        assert n.ReturnCode == 0, "Didn't return 0"
+        
+        parts = n.Output.split('=');
+        assert len(parts) == 2, "Invalid Output"
+        return parts[1].strip();
         
 
-def pci_dev(bus, device, func):
-    return {'bus': bus, 'device': device, 'func': func};
+def pci_dev(bus, device, func, name):
+    return {'bus': bus, 'device': device, 'func': func, 'name': name};
 
 def to_pcie_register_1(mcfg_base, bus, dev, func, offset):
     return mcfg_base + (bus << 20) + (dev << 15) + (func << 12) + offset;
@@ -350,13 +359,14 @@ def parse_device_string(val):
     return pci_dev(
         int(bus, 16), 
         int(dev, 16), 
-        int(func, 16)
+        int(func, 16),
+        val
     );
 
 def check_L12():
     
-    pcie_root = pci_dev(0, 1, 0);
-    gpu_pcie = pci_dev(1, 0, 0);
+    pcie_root = pci_dev(0, 1, 0, "Root");
+    gpu_pcie = pci_dev(1, 0, 0, "GPU");
     
     rwe = ReadWriteEverything()
     print(f"Found {rwe.version} at {rwe.exePath}");
@@ -366,6 +376,8 @@ def check_L12():
     found_likely_gpu = False;
     likely_gpu_id = 0;
     
+    root_bridges = {};
+    
     print("\nPCI Device List Options (*r = likely Root, *g = likely GPU):")
     pci_tree_list = rwe.callRWECommand("PCITREE").Output.split('\r\n');
     device_list = [];
@@ -374,18 +386,41 @@ def check_L12():
         ent = pci_tree_list[i].strip();
         if (not ent.startswith("Bus")):
             continue;
+        bdf = parse_device_string(ent)
         astrisk = '';
-        if (not found_likely_root and "PCI-to-PCI Bridge" in ent): #PCI-to-PCI Bridge
-            found_likely_root = True;
-            likely_root_id = num_valid + 1;
-            astrisk = '*r';
+        if ("PCI-to-PCI Bridge" in ent):
+            root_bridges[num_valid] = bdf;
+            #found_likely_root = True;
+            #likely_root_id = num_valid + 1;
+            #astrisk = '*r';
+        bdf['is_likely_gpu'] = (not found_likely_gpu and "nVidia Corporation VGA Controller" in ent);
         if (not found_likely_gpu and "nVidia Corporation VGA Controller" in ent): #PCI-to-PCI Bridge
             found_likely_gpu = True;
             likely_gpu_id = num_valid + 1;
-            astrisk = '*g';
-        print(f"  {num_valid + 1}: {ent} {astrisk}");
-        device_list.append(parse_device_string(ent))
+            #astrisk = '*g';
+        #print(f"  {num_valid + 1}: {ent} {astrisk}");
+        device_list.append(bdf)
         num_valid += 1;
+    
+    for id, bdf in root_bridges.items():
+        sec = int(rwe.readConfigByte(0, bdf['device'], bdf['func'], 0x19), 16);
+        sub = int(rwe.readConfigByte(0, bdf['device'], bdf['func'], 0x1A), 16);
+        if (sec <= device_list[likely_gpu_id - 1]['bus'] and device_list[likely_gpu_id - 1]['bus'] <= sub):
+            likely_root_id = id + 1;
+            device_list[id]['is_likely_root'] = True;
+            found_likely_root = True;
+            break;
+    
+    for i in range(len(device_list)):
+        bdf = device_list[i];
+        astrisk = '';
+        if ('is_likely_root' in bdf and bdf['is_likely_root']):
+            astrisk = '*r';
+        if ('is_likely_gpu' in bdf and bdf['is_likely_gpu']):
+            astrisk = '*g';
+        print(f"  {i + 1}: {bdf['name']} {astrisk}");
+    
+    assert found_likely_root, "Found to found Root bridge!"
     
     root_device_selection = int(input(f"\nPlease Enter selection for PCIe Root Device (1 - {num_valid}, probably {likely_root_id}): ")) - 1;
     gpu_device_selection = int(input(f"Please Enter selection for GPU Device  (1 - {num_valid}, probably {likely_gpu_id}): ")) - 1;
