@@ -5,3 +5,5 @@ Utility script to scan the PCIe capabilities for the PCIe Root Device and GPU PC
 https://www.reddit.com/r/GamingLaptops/comments/1pw3qud/asus_rog_laptops_are_broken_by_design_a_forensic/
 
 Just run the python script with an administrator command prompt, select the correct devices (it should recommend the most likely ones), and it will tell you if the bug persists on your ASUS ROG laptop.
+
+Contains a stripped down and modified version of PyRW used to read ACPI and PCI data: https://github.com/csm10495/PyRW/tree/master
